@@ -10,29 +10,27 @@ import torch.nn as nn
 from channel import Channel
 import torch.nn.functional as F
 
-""" def _image_normalization(norm_type):
-    def _inner(tensor: torch.Tensor):
-        if norm_type == 'nomalization':
-            return tensor / 255.0
-        elif norm_type == 'denormalization':
-            return (tensor * 255.0).type(torch.FloatTensor)
-        else:
-            raise Exception('Unknown type of normalization')
-    return _inner """
+# Uncomment if needed
+# def _image_normalization(norm_type):
+#     def _inner(tensor: torch.Tensor):
+#         if norm_type == 'nomalization':
+#             return tensor / 255.0
+#         elif norm_type == 'denormalization':
+#             return (tensor * 255.0).type(torch.FloatTensor)
+#         else:
+#             raise Exception('Unknown type of normalization')
+#     return _inner
 
 
 def ratio2filtersize(x: torch.Tensor, ratio):
     if x.dim() == 4:
-        # before_size = np.prod(x.size()[1:])
         before_size = torch.prod(torch.tensor(x.size()[1:]))
     elif x.dim() == 3:
-        # before_size = np.prod(x.size())
         before_size = torch.prod(torch.tensor(x.size()))
     else:
         raise Exception('Unknown size of input')
     encoder_temp = _Encoder(is_temp=True)
     z_temp = encoder_temp(x)
-    # c = before_size * ratio / np.prod(z_temp.size()[-2:])
     c = before_size * ratio / torch.prod(torch.tensor(z_temp.size()[-2:]))
     return int(c)
 
@@ -57,7 +55,7 @@ class _TransConvWithPReLU(nn.Module):
         self.transconv = nn.ConvTranspose2d(
             in_channels, out_channels, kernel_size, stride, padding, output_padding)
         self.activate = activate
-        if activate == nn.PReLU():
+        if isinstance(activate, nn.PReLU):
             nn.init.kaiming_normal_(self.transconv.weight, mode='fan_out',
                                     nonlinearity='leaky_relu')
         else:
@@ -73,11 +71,9 @@ class _Encoder(nn.Module):
     def __init__(self, c=1, is_temp=False, P=1):
         super(_Encoder, self).__init__()
         self.is_temp = is_temp
-        # self.imgae_normalization = _image_normalization(norm_type='nomalization')
         self.conv1 = _ConvWithPReLU(in_channels=3, out_channels=16, kernel_size=5, stride=2, padding=2)
         self.conv2 = _ConvWithPReLU(in_channels=16, out_channels=32, kernel_size=5, stride=2, padding=2)
-        self.conv3 = _ConvWithPReLU(in_channels=32, out_channels=32,
-                                    kernel_size=5, padding=2)  # padding size could be changed here
+        self.conv3 = _ConvWithPReLU(in_channels=32, out_channels=32, kernel_size=5, padding=2)
         self.conv4 = _ConvWithPReLU(in_channels=32, out_channels=32, kernel_size=5, padding=2)
         self.conv5 = _ConvWithPReLU(in_channels=32, out_channels=2*c, kernel_size=5, padding=2)
         self.norm = self._normlizationLayer(P=P)
@@ -87,15 +83,12 @@ class _Encoder(nn.Module):
         def _inner(z_hat: torch.Tensor):
             if z_hat.dim() == 4:
                 batch_size = z_hat.size()[0]
-                # k = np.prod(z_hat.size()[1:])
                 k = torch.prod(torch.tensor(z_hat.size()[1:]))
             elif z_hat.dim() == 3:
                 batch_size = 1
-                # k = np.prod(z_hat.size())
                 k = torch.prod(torch.tensor(z_hat.size()))
             else:
                 raise Exception('Unknown size of input')
-            # k = torch.tensor(k)
             z_temp = z_hat.reshape(batch_size, 1, 1, -1)
             z_trans = z_hat.reshape(batch_size, 1, -1, 1)
             tensor = torch.sqrt(P * k) * z_hat / torch.sqrt((z_temp @ z_trans))
@@ -105,7 +98,6 @@ class _Encoder(nn.Module):
         return _inner
 
     def forward(self, x):
-        # x = self.imgae_normalization(x)
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
@@ -119,17 +111,17 @@ class _Encoder(nn.Module):
 class _Decoder(nn.Module):
     def __init__(self, c=1):
         super(_Decoder, self).__init__()
-        # self.imgae_normalization = _image_normalization(norm_type='denormalization')
         self.tconv1 = _TransConvWithPReLU(
             in_channels=2*c, out_channels=32, kernel_size=5, stride=1, padding=2)
         self.tconv2 = _TransConvWithPReLU(
             in_channels=32, out_channels=32, kernel_size=5, stride=1, padding=2)
         self.tconv3 = _TransConvWithPReLU(
             in_channels=32, out_channels=32, kernel_size=5, stride=1, padding=2)
-        self.tconv4 = _TransConvWithPReLU(in_channels=32, out_channels=16, kernel_size=5, stride=2, padding=2, output_padding=1)
+        self.tconv4 = _TransConvWithPReLU(
+            in_channels=32, out_channels=16, kernel_size=5, stride=2, padding=2, output_padding=1)
         self.tconv5 = _TransConvWithPReLU(
-            in_channels=16, out_channels=3, kernel_size=5, stride=2, padding=2, output_padding=1,activate=nn.Sigmoid())
-        # may be some problems in tconv4 and tconv5, the kernal_size is not the same as the paper which is 5
+            in_channels=16, out_channels=3, kernel_size=5, stride=2, padding=2, output_padding=1, activate=nn.Sigmoid())
+        # Note: tconv4 and tconv5 kernel_size may differ from some papers
 
     def forward(self, x):
         x = self.tconv1(x)
@@ -137,7 +129,6 @@ class _Decoder(nn.Module):
         x = self.tconv3(x)
         x = self.tconv4(x)
         x = self.tconv5(x)
-        # x = self.imgae_normalization(x)
         return x
 
 
@@ -147,6 +138,8 @@ class DeepJSCC(nn.Module):
         self.encoder = _Encoder(c=c)
         if snr is not None:
             self.channel = Channel(channel_type, snr)
+        else:
+            self.channel = None
         self.decoder = _Decoder(c=c)
 
     def forward(self, x):
@@ -171,53 +164,52 @@ class DeepJSCC(nn.Module):
         criterion = nn.MSELoss(reduction='mean')
         loss = criterion(prd, gt)
         return loss
-        
+
     def encode_with_roi(self, x, roi_mask, roi_weight=2.0):
-    """
-    Encode an image with ROI prioritization.
-    
-    Args:
-        x (torch.Tensor): The input image.
-        roi_mask (torch.Tensor): The ROI mask, with 1s for ROI regions and 0s elsewhere.
-        roi_weight (float): The weight to apply to ROI regions.
-    
-    Returns:
-        torch.Tensor: The encoded image.
-    """
-    # Store original training state and set to eval mode
-    training_state = self.training
-    self.eval()
-    
-    with torch.no_grad():
-        # Extract encoder features
-        x1 = self.encoder.conv1(x)
-        x2 = self.encoder.conv2(x1)
-        x3 = self.encoder.conv3(x2)
-        x4 = self.encoder.conv4(x3)
-        x5 = self.encoder.conv5(x4)
-        
-        # Apply ROI-based attention
-        if roi_mask is not None:
-            # Ensure roi_mask has the same spatial dimensions as x5
-            if roi_mask.shape[-2:] != x5.shape[-2:]:
-                roi_mask = F.interpolate(roi_mask, size=x5.shape[-2:], mode='nearest')
-            
-            # Apply attention to ROI regions
-            x5 = x5 * (1 + (roi_weight - 1) * roi_mask)
-        
-        # Apply normalization
-        z = self.encoder.norm(x5)
-        
-        # Continue with the rest of the model
-        if hasattr(self, 'channel') and self.channel is not None:
-            z = self.channel(z)
-        
-        x_hat = self.decoder(z)
-    
-    # Restore original training state
-    self.train(training_state)
-    
-    return x_hat
+        """
+        Encode an image with ROI prioritization.
+
+        Args:
+            x (torch.Tensor): The input image.
+            roi_mask (torch.Tensor): The ROI mask, with 1s for ROI regions and 0s elsewhere.
+            roi_weight (float): The weight to apply to ROI regions.
+
+        Returns:
+            torch.Tensor: The encoded image.
+        """
+        # Store original training state and set to eval mode
+        training_state = self.training
+        self.eval()
+        with torch.no_grad():
+            # Extract encoder features
+            x1 = self.encoder.conv1(x)
+            x2 = self.encoder.conv2(x1)
+            x3 = self.encoder.conv3(x2)
+            x4 = self.encoder.conv4(x3)
+            x5 = self.encoder.conv5(x4)
+
+            # Apply ROI-based attention
+            if roi_mask is not None:
+                # Ensure roi_mask has the same spatial dimensions as x5
+                if roi_mask.shape[-2:] != x5.shape[-2:]:
+                    roi_mask = F.interpolate(roi_mask, size=x5.shape[-2:], mode='nearest')
+
+                # Apply attention to ROI regions
+                x5 = x5 * (1 + (roi_weight - 1) * roi_mask)
+
+            # Apply normalization
+            z = self.encoder.norm(x5)
+
+            # Continue with the rest of the model
+            if hasattr(self, 'channel') and self.channel is not None:
+                z = self.channel(z)
+
+            x_hat = self.decoder(z)
+
+        # Restore original training state
+        self.train(training_state)
+
+        return x_hat
 
 
 if __name__ == '__main__':
@@ -231,3 +223,4 @@ if __name__ == '__main__':
     print(model.encoder.norm(y))
     print(model.encoder.norm(y).size())
     print(model.encoder.norm(y).size()[1:])
+
